@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { Alert } from '../models/Alert.js';
 import { AuditLog } from '../models/AuditLog.js';
+import { User } from '../models/User.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { Response } from 'express';
+import { translateAndSummarizeIncident } from '../services/gemini.js';
 
 const router = Router();
 
@@ -19,16 +21,27 @@ router.get('/history/all', authMiddleware, async (req: AuthRequest, res: Respons
   }
 });
 
-// Get all active alerts (staff only)
+// Get all active alerts (staff only) or guest's own alerts
 router.get('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    if (!['STAFF', 'ADMIN'].includes(req.user?.role || '')) {
+    let alerts;
+    
+    // Staff/Admin see all active alerts
+    if (['STAFF', 'ADMIN'].includes(req.user?.role || '')) {
+      alerts = await Alert.find({
+        status: { $in: ['PENDING', 'ACKNOWLEDGED', 'RESOLVING'] },
+      }).sort({ timestamp: -1 });
+    } 
+    // Guests see only their own alerts
+    else if (req.user?.role === 'USER') {
+      alerts = await Alert.find({
+        userId: req.user.id,
+        status: { $in: ['PENDING', 'ACKNOWLEDGED', 'RESOLVING'] },
+      }).sort({ timestamp: -1 });
+    } 
+    else {
       return res.status(403).json({ error: 'Forbidden' });
     }
-
-    const alerts = await Alert.find({
-      status: { $in: ['PENDING', 'ACKNOWLEDGED', 'RESOLVING'] },
-    }).sort({ timestamp: -1 });
 
     res.json(alerts);
   } catch (error) {
@@ -45,15 +58,27 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Invalid alert type' });
     }
 
+    const currentUser = await User.findOne({ id: req.user?.id }).select('-password');
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentRoom = currentUser.room || 'Unknown';
+    const currentFloor = currentUser.room?.split('-')[0] || 'Unknown';
+    const aiResult = await translateAndSummarizeIncident(guestMessage || '', language);
+
     // Create alert
     const alert = await Alert.create({
       type,
       userId: req.user?.id,
-      room: req.user?.room || 'Unknown',
-      floor: req.user?.room?.split('-')[0] || 'Unknown', // Extract floor from room format like "3-201"
+      room: currentRoom,
+      floor: currentFloor,
       guestMessage,
       guestInfo: {
         language: language || 'Auto-detect',
+        detectedLanguage: aiResult.detectedLanguage,
+        translatedMessage: aiResult.translatedText,
+        aiSummary: aiResult.summary,
         originalMessage: guestMessage,
       },
     });
@@ -63,7 +88,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
       userId: req.user?.id,
       username: req.user?.username,
       action: `SOS_${type}_CREATED`,
-      details: `Alert created for room ${req.user?.room}`,
+      details: `Alert created for room ${currentRoom}`,
     });
 
     req.io?.emit('new_alert', alert);
@@ -82,6 +107,11 @@ router.get('/:alertId', authMiddleware, async (req: AuthRequest, res: Response) 
 
     if (!alert) {
       return res.status(404).json({ error: 'Alert not found' });
+    }
+
+    // Guests can only view their own alerts
+    if (req.user?.role === 'USER' && alert.userId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     res.json(alert);

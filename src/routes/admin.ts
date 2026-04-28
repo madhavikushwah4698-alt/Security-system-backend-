@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { User } from '../models/User.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { translateAndSummarizeIncident, translateText, checkGeminiHealth } from '../services/gemini.js';
 
 const router = Router();
 
@@ -61,6 +62,13 @@ router.post('/personnel', authMiddleware, async (req: AuthRequest, res) => {
     });
 
     req.io?.emit('new_audit_log', auditLog);
+    req.io?.emit('personnel_created', {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      room: user.room,
+    });
 
     res.status(201).json({
       id: user.id,
@@ -114,6 +122,10 @@ router.patch('/users/:userId', authMiddleware, async (req: AuthRequest, res) => 
     });
 
     req.io?.emit('new_audit_log', auditLog);
+    req.io?.emit('guest_room_updated', {
+      id: user.id,
+      room: user.room,
+    });
 
     res.json(user);
   } catch (error) {
@@ -133,8 +145,52 @@ router.get('/audit-logs', authMiddleware, async (req: AuthRequest, res) => {
 });
 
 router.post('/translate', authMiddleware, async (req: AuthRequest, res) => {
-  const { text } = req.body;
-  res.json({ translated: text || '' });
+  try {
+    const { text, sourceLang, targetLang } = req.body;
+
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({ error: 'Text is required for translation.' });
+    }
+
+    // If a specific target language is requested, use the standalone translateText function
+    if (targetLang && typeof targetLang === 'string') {
+      const translated = await translateText(text, targetLang);
+      return res.json({
+        original: text,
+        translated,
+        targetLang,
+      });
+    }
+
+    // Default: full translation + summarization (used by alert system)
+    const aiResult = await translateAndSummarizeIncident(text, sourceLang);
+    res.json({
+      original: text,
+      translated: aiResult.translatedText,
+      detectedLanguage: aiResult.detectedLanguage,
+      summary: aiResult.summary,
+    });
+  } catch (error) {
+    console.error('[TRANSLATE ROUTE] Translation failed:', error);
+    res.status(500).json({
+      error: 'Translation failed',
+      detail: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// Gemini API health check — useful for debugging 403/401 errors
+router.get('/gemini-health', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const health = await checkGeminiHealth();
+    const httpStatus = health.status === 'ok' ? 200 : 503;
+    res.status(httpStatus).json(health);
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Health check failed',
+    });
+  }
 });
 
 export default router;

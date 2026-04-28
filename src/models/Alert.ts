@@ -18,7 +18,9 @@ const alertSchema = new mongoose.Schema(
     guestMessage: { type: String },
     guestInfo: {
       language: String,
+      detectedLanguage: String,
       translatedMessage: String,
+      aiSummary: String,
       originalMessage: String,
     },
     assignedRoles: [

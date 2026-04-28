@@ -31,13 +31,13 @@ async function registerHandler(req: AuthRequest, res: Response) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
+    // Create user (room is only assigned by admin)
     const user = await User.create({
       username,
       email,
       password: hashedPassword,
       role: normalizedRole,
-      room,
+      room: normalizedRole === 'ADMIN' ? room : undefined,
     });
 
     const auditLog = await AuditLog.create({
