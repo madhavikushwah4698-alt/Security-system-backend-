@@ -7,6 +7,13 @@ import { Response } from 'express';
 
 const router = Router();
 const ADMIN_ACCESS_CODE = (process.env.ADMIN_ACCESS_CODE || 'CRISIS-ADMIN-2026').toUpperCase();
+const isProduction = process.env.NODE_ENV === 'production';
+const authCookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+} as const;
 
 // Register
 async function registerHandler(req: AuthRequest, res: Response) {
@@ -49,11 +56,7 @@ async function registerHandler(req: AuthRequest, res: Response) {
 
     const token = generateToken(user.id, user.username, user.role, user.room);
 
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    res.cookie('token', token, authCookieOptions);
 
     res.json({
       id: user.id,
@@ -100,11 +103,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
 
     const token = generateToken(user.id, user.username, user.role, user.room);
 
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    res.cookie('token', token, authCookieOptions);
 
     const auditLog = await AuditLog.create({
       userId: user.id,
@@ -153,7 +152,11 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res: Response) => {
 
 // Logout
 router.post('/logout', (req, res) => {
-  res.clearCookie('token');
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+  });
   res.json({ message: 'Logged out successfully' });
 });
 
