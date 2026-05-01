@@ -12,8 +12,8 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Cookie options - properly configured for both dev and production
 const authCookieOptions = {
   httpOnly: true,  // Prevents JavaScript access (secure against XSS)
-  secure: isProduction,  // HTTPS only in production
-  sameSite: isProduction ? 'none' : 'lax',  // 'none' for cross-origin in production
+  secure: true,  // ALWAYS use HTTPS - required for SameSite=None
+  sameSite: 'none' as const,  // Must be 'none' for cross-domain cookies
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   path: '/',  // Ensure cookie is sent to all paths
 } as const;
